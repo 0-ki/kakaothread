@@ -1,0 +1,23 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets
+.env
+
+# Data (개인 채팅 로그 / 임베딩 캐시 — 커밋 금지)
+data/
+
+# Logs
+logs/
+
+# 로컬 도구 설정 (개인 환경)
+.claude/
+.vscode/
