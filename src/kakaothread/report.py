@@ -271,7 +271,8 @@ main {{ max-width:1000px; margin:0 auto; padding:24px; }}
 .cat .dot {{ width:12px; height:12px; border-radius:50%; background:var(--cat); }}
 .cat-meta {{ font-size:12px; color:var(--muted); font-weight:400; margin-left:auto; }}
 .cards {{ display:grid; gap:12px; }}
-.card {{ background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; }}
+.card {{ background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden;
+         content-visibility:auto; contain-intrinsic-size:auto 220px; }}
 .card.hidden {{ display:none; }}
 .card-head {{ display:flex; align-items:center; gap:10px; padding:10px 14px; background:#f1f5f9;
               border-bottom:1px solid var(--line); cursor:pointer; }}
@@ -298,7 +299,8 @@ main {{ max-width:1000px; margin:0 auto; padding:24px; }}
 #timeline {{ display:none; }}
 #timeline.on {{ display:block; }}
 #threads.off {{ display:none; }}
-#timeline .msg {{ background:#fff; border-bottom:1px solid #f1f5f9; }}
+#timeline .msg {{ background:#fff; border-bottom:1px solid #f1f5f9;
+                  content-visibility:auto; contain-intrinsic-size:auto 30px; }}
 </style></head>
 <body>
 <header>
@@ -332,10 +334,19 @@ main {{ max-width:1000px; margin:0 auto; padding:24px; }}
 </header>
 <main>
   <div id="threads">{''.join(thread_view_parts)}</div>
-  <div id="timeline">{timeline}</div>
+  <div id="timeline"></div>
+  <template id="timeline-tpl">{timeline}</template>
 </main>
 <script>
 function showView(v) {{
+  // 타임라인은 첫 진입 때만 생성 (초기 DOM 절반으로 — 메시지 중복 렌더 방지)
+  if (v==='timeline') {{
+    var tl = document.getElementById('timeline');
+    if (!tl.dataset.built) {{
+      tl.appendChild(document.getElementById('timeline-tpl').content.cloneNode(true));
+      tl.dataset.built = '1';
+    }}
+  }}
   document.getElementById('threads').className = v==='threads' ? '' : 'off';
   document.getElementById('timeline').className = v==='timeline' ? 'on' : '';
   document.getElementById('btn-threads').className = v==='threads' ? 'active' : '';
