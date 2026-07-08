@@ -1,6 +1,12 @@
-"""janitor(카테고리 정리부) 테스트 — 병합맵 해소와 적용."""
+"""janitor(카테고리 정리부) 테스트 — 병합맵 해소와 적용, 중복 스레드 병합."""
 from kakaothread import janitor
-from kakaothread.janitor import Merge, MergePlan, _resolve, consolidate
+from kakaothread.janitor import (
+    Merge,
+    MergePlan,
+    _resolve,
+    consolidate,
+    merge_duplicate_threads,
+)
 from kakaothread.llm_segment import Thread
 
 
@@ -53,3 +59,35 @@ def test_consolidate_skips_single_category(monkeypatch):
     threads = _threads("취업", "취업")
     merged, mapping = consolidate(threads, pool=None)
     assert merged is threads and mapping == {}
+
+
+def _dup_threads() -> dict[int, Thread]:
+    # 같은 "종목 정보 > 삼성전자" 가 3개(id 1,3,5), 대표는 메시지 최다인 id 3
+    return {
+        1: Thread(thread_id=1, category="종목 정보", topic="삼성전자", summary="a"),
+        2: Thread(thread_id=2, category="종목 정보", topic="SK하이닉스", summary="b"),
+        3: Thread(thread_id=3, category="종목 정보", topic="삼성전자", summary="대표"),
+        5: Thread(thread_id=5, category="종목 정보", topic=" 삼성전자 ", summary="c"),  # 공백만 다름
+    }
+
+
+def test_merge_duplicate_threads_collapses_same_label():
+    threads = _dup_threads()
+    # id3에 3건, id1에 1건, id5에 1건, id2에 2건
+    assignments = {10: 1, 11: 3, 12: 3, 13: 3, 14: 5, 15: 2, 16: 2, 0: 0}
+    merged, new_assign, n = merge_duplicate_threads(threads, assignments)
+
+    assert n == 2  # id1, id5 가 id3 으로 흡수
+    assert set(merged) == {2, 3}  # 대표(3=최다 배정) + 하이닉스(2) 만 남음
+    assert merged[3].summary == "대표"  # 대표 스레드의 요약 유지
+    # 삼성전자였던 모든 배정이 대표 id 3 으로
+    assert new_assign[10] == 3 and new_assign[14] == 3
+    assert new_assign[15] == 2  # 다른 topic 은 그대로
+    assert new_assign[0] == 0   # 잡담은 불변
+
+
+def test_merge_duplicate_threads_noop_when_unique():
+    threads = _threads("A", "B")  # topic t0, t1 로 서로 다름
+    assignments = {1: 1, 2: 2}
+    merged, new_assign, n = merge_duplicate_threads(threads, assignments)
+    assert n == 0 and merged is threads and new_assign is assignments

@@ -17,6 +17,47 @@ logger = logging.getLogger(__name__)
 
 NL = "\n"
 
+# 잡담 전용 스레드 (병합 대상에서 제외). pipeline.NOISE_THREAD_ID 와 동일 값.
+NOISE_THREAD_ID = 0
+
+
+def merge_duplicate_threads(
+    all_threads: dict[int, Thread], assignments: dict[int, int]
+) -> tuple[dict[int, Thread], dict[int, int], int]:
+    """같은 ``category > topic`` 인 스레드들을 하나로 병합하고 배정을 재매핑한다.
+
+    분류가 세션 경계 리셋·모델 편차 탓에 같은 주제("삼성전자")를 여러 thread_id 로
+    쪼갠 것을, 메시지를 다시 읽지 않고 **결정적으로(LLM 없이)** 사후 통합한다.
+    category 통일(consolidate) 뒤에 부르면 표기가 정규화된 상태라 더 잘 합쳐진다.
+
+    - 대표 스레드 = 그 라벨에 배정된 메시지가 가장 많은 스레드(동률이면 작은 id).
+      대표의 topic/summary 를 유지한다.
+    - 잡담(0)은 건드리지 않는다.
+    반환: (병합된 all_threads, 재매핑된 assignments, 병합으로 사라진 스레드 수)
+    """
+    counts = Counter(assignments.values())  # thread_id -> 배정된 메시지 수
+    groups: dict[tuple[str, str], list[int]] = defaultdict(list)
+    for tid, t in all_threads.items():
+        if tid == NOISE_THREAD_ID:
+            continue
+        groups[(t.category.strip(), t.topic.strip())].append(tid)
+
+    remap: dict[int, int] = {}
+    for tids in groups.values():
+        rep = sorted(tids, key=lambda x: (-counts.get(x, 0), x))[0]
+        for tid in tids:
+            remap[tid] = rep
+
+    n_merged = sum(1 for tid, rep in remap.items() if tid != rep)
+    if not n_merged:
+        return all_threads, assignments, 0
+
+    merged = {tid: t for tid, t in all_threads.items() if remap.get(tid, tid) == tid}
+    new_assign = {mid: remap.get(tid, tid) for mid, tid in assignments.items()}
+    logger.info("중복 스레드 병합: %d개 -> %d개 (%d건 통합)",
+                len(all_threads), len(merged), n_merged)
+    return merged, new_assign, n_merged
+
 
 class Merge(BaseModel):
     from_category: str = Field(description="합쳐져 사라질 기존 category 이름")

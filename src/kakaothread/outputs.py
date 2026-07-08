@@ -7,7 +7,7 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-from . import report
+from . import janitor, report
 from .cost import UsageTracker
 from .llm_segment import Thread
 from .pipeline import NOISE_THREAD_ID
@@ -47,6 +47,10 @@ def save_and_report(
     anonymize: bool | None = None,
     note: str | None = None,
 ) -> None:
+    # 사후 중복 스레드 병합 — 같은 category>topic 으로 쪼개진 스레드를 하나로.
+    # (세션 경계 리셋·모델 편차로 "삼성전자"가 여러 스레드로 갈리는 것을 결정적으로 통합)
+    all_threads, assignments, n_merged = janitor.merge_duplicate_threads(all_threads, assignments)
+
     by_msg = {m.msg_id: m for m in messages}
     members: dict[int, list[int]] = defaultdict(list)
     unknown = 0
@@ -92,6 +96,8 @@ def save_and_report(
         "source": source,
         "generated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
+    if n_merged:
+        meta["threads_merged"] = n_merged  # 사후 병합으로 통합된 중복 스레드 수
     if source_sha256:
         meta["source_sha256"] = source_sha256  # 동일 원본 재실행 감지용
     if anonymize is not None:
