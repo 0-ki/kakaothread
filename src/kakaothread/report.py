@@ -250,10 +250,17 @@ header h1 {{ margin:0 0 8px; font-size:18px; }}
 .ri-table th {{ color:var(--muted); font-weight:600; }}
 .ri-table .num {{ text-align:right; font-variant-numeric:tabular-nums; }}
 #filter .fbtns {{ margin-bottom:8px; display:flex; gap:8px; }}
+#filter .fbtns button {{ border:1px solid var(--line); background:#fff; padding:5px 12px;
+                         border-radius:8px; cursor:pointer; font-size:12px; color:var(--fg); }}
+#filter .fbtns button:hover {{ background:#eef2f7; }}
+#filter input[type=checkbox] {{ width:14px; height:14px; margin:0; accent-color:var(--fg);
+                                cursor:pointer; flex:none; }}
 .fgroup {{ margin:6px 0; }}
 .flabel {{ font-size:12px; font-weight:700; color:var(--cat); margin-bottom:3px; }}
-.fitem {{ display:inline-flex; align-items:center; gap:5px; font-size:12px; margin:2px 12px 2px 0;
+.fitem {{ display:inline-flex; align-items:center; gap:6px; font-size:12px; margin:2px 8px 2px 0;
+          padding:3px 10px; border:1px solid var(--line); border-radius:999px; background:#fff;
           cursor:pointer; user-select:none; }}
+.fitem:hover {{ background:#f1f5f9; }}
 .fdot {{ width:9px; height:9px; border-radius:2px; display:inline-block; }}
 .fn {{ color:var(--muted); }}
 main {{ max-width:1000px; margin:0 auto; padding:24px; }}
