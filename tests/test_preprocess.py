@@ -144,6 +144,35 @@ def test_parse_mobile_format(tmp_path):
     assert msgs[1].text == "저도요 둘째 줄"  # 멀티라인 병합 동일 동작
 
 
+BRACKET_SAMPLE = """주말 등산 모임방 님과 카카오톡 대화
+저장한 날짜 : 2026-07-08 09:45:04
+
+--------------- 2026년 7월 3일 금요일 ---------------
+[산지기] [오후 2:37] 이번 주말 산행 어디로 갈까요
+[김초보] [오후 2:38] 저는 초보라 쉬운 코스가 좋아요
+[산지기] [오후 2:38] 그럼 관악산 어때요
+등산로 잘 되어 있어요
+[날다람쥐] [오후 2:40] 좋아요
+김초보님이 나갔습니다.
+--------------- 2026년 7월 4일 토요일 ---------------
+[산지기] [오전 9:05] 다들 도착하셨나요
+"""
+
+
+def test_parse_bracket_format(tmp_path):
+    """포맷 B: 날짜는 요일 구분선에만, 메시지는 '[발신자] [시각] 본문'."""
+    p = tmp_path / "bracket.txt"
+    p.write_text(BRACKET_SAMPLE, encoding="utf-8")
+    msgs = parse_kakao(p)
+    # 헤더/저장날짜/시스템(나감) 줄은 제거, 발신자 공백 포함 인식
+    assert [m.sender for m in msgs] == ["산지기", "김초보", "산지기", "날다람쥐", "산지기"]
+    # 날짜는 구분선에서, 시각은 메시지에서 결합
+    assert msgs[0].dt == datetime(2026, 7, 3, 14, 37)
+    assert msgs[2].text == "그럼 관악산 어때요 등산로 잘 되어 있어요"  # 멀티라인 병합
+    # 두 번째 날짜 헤더 이후 메시지는 다음 날짜로
+    assert msgs[4].dt == datetime(2026, 7, 4, 9, 5)
+
+
 def test_weekday_date_header_not_swallowed(tmp_path):
     """요일 날짜 헤더가 직전 메시지 연속 줄로 오인되지 않아야 한다."""
     sample = (

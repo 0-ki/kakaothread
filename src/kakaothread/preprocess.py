@@ -16,24 +16,48 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 # ── 정규식 ──────────────────────────────────────────────────────────
-# 날짜 표기가 내보내기 경로에 따라 다르다:
-#   PC:     "2026년 5월 11일 오후 2:25, <내용>"
-#   모바일: "2026. 5. 11. 오후 2:25, <내용>"
-# 줄 단위로 두 패턴을 모두 시도하므로 포맷 자동 감지 (혼재해도 동작).
+# 카카오톡 내보내기는 두 계열의 포맷이 있고, 둘 다 자동 감지·지원한다.
+#
+# 포맷 A — 줄마다 날짜+시각+발신자가 다 들어있는 형태:
+#   PC:     "2026년 5월 11일 오후 2:25, 철수 : 안녕"
+#   모바일: "2026. 5. 11. 오후 2:25, 철수 : 안녕"
+#
+# 포맷 B — 날짜는 '요일 구분선'에만, 메시지 줄엔 시각만 있는 형태:
+#   "--------------- 2026년 7월 3일 금요일 ---------------"
+#   "[철수] [오후 2:37] 안녕"
+#
+# 줄 단위로 모든 패턴을 시도하므로 두 포맷이 섞여 있어도 동작한다.
 _DATE_PC = r"(\d{4})년 (\d{1,2})월 (\d{1,2})일"
 _DATE_MOBILE = r"(\d{4})\. (\d{1,2})\. (\d{1,2})\."
 _TIME = r"(오전|오후) (\d{1,2}):(\d{2})"
 
+# 포맷 A: "날짜 시각, 발신자 : 본문"
 LINE_RES = [
     re.compile(rf"^{_DATE_PC} {_TIME}, (.*)$"),
     re.compile(rf"^{_DATE_MOBILE} {_TIME}, (.*)$"),
 ]
-# 콤마 없는 '날짜/구분선' 줄 (스킵 대상) — 시각 구분선과 요일 날짜 헤더
+
+# 날짜 섹션 헤더 (요일 포함) — 포맷 B의 '유일한' 날짜 공급원.
+# 대시로 감싼 형태와 대시 없는 형태 모두 인식하고 (y, m, d) 를 넘긴다.
+_DASH = r"-*"
+DATE_HEADER_RES = [
+    re.compile(rf"^\s*{_DASH}\s*{_DATE_PC} [일월화수목금토]요일\s*{_DASH}\s*$"),
+    re.compile(rf"^\s*{_DASH}\s*{_DATE_MOBILE} [일월화수목금토]요일\s*{_DASH}\s*$"),
+]
+
+# 콤마 없는 '시각 구분선' 줄 (스킵 대상) — 포맷 A의 세로 변형 "2026년 5월 11일 오후 2:19"
 DATE_ONLY_RES = [
     re.compile(rf"^{_DATE_PC} {_TIME}$"),
     re.compile(rf"^{_DATE_MOBILE} {_TIME}$"),
-    re.compile(rf"^{_DATE_PC} [일월화수목금토]요일$"),
-    re.compile(rf"^{_DATE_MOBILE} [일월화수목금토]요일$"),
+]
+
+# 포맷 B 메시지: "[발신자] [오후 H:MM] 본문" (발신자에 공백/이모지 허용)
+BRACKET_MSG_RE = re.compile(rf"^\[(.+?)\] \[{_TIME}\] (.*)$")
+
+# 입장/퇴장 등 시스템 줄 — 포맷 B에선 대괄호 없이 나타나므로 연속 줄로 오인 방지
+SYSTEM_LINE_RES = [
+    re.compile(r"^.{1,50}?님이 (들어왔습니다|나갔습니다)\.?$"),
+    re.compile(r"^.{1,50}?님을 내보냈습니다\.?$"),
 ]
 
 SENDER_SEP = " : "          # 발신자/본문 구분자 (공백-콜론-공백)
@@ -81,11 +105,49 @@ def parse_line(line: str) -> tuple[datetime, str] | None:
 
 
 def is_date_separator(line: str) -> bool:
-    """콤마 없는 날짜/시각 구분선(스킵 대상)이면 True.
+    """콤마 없는 시각 구분선(스킵 대상)이면 True.
 
     놓치면 직전 메시지의 '연속 줄'로 오인돼 본문에 섞여 들어간다.
     """
     return any(r.match(line) for r in DATE_ONLY_RES)
+
+
+def match_date_header(line: str) -> tuple[int, int, int] | None:
+    """'요일 날짜 헤더'면 (year, month, day) 반환, 아니면 None.
+
+    포맷 B는 날짜가 이 헤더에만 있으므로, 파서가 여기서 날짜를 얻어 이후
+    메시지(시각만 있는)에 물려준다. 포맷 A에선 단순 스킵 대상이라 무해하다.
+    """
+    for r in DATE_HEADER_RES:
+        m = r.match(line)
+        if m is not None:
+            year, month, day = m.groups()
+            return int(year), int(month), int(day)
+    return None
+
+
+def is_system_line(line: str) -> bool:
+    """입장/퇴장/내보내기 같은 시스템 줄이면 True (포맷 B의 대괄호 없는 형태)."""
+    return any(r.match(line) for r in SYSTEM_LINE_RES)
+
+
+def parse_bracket_line(
+    line: str, cur_date: tuple[int, int, int] | None
+) -> tuple[datetime, str, str] | None:
+    """포맷 B '[발신자] [오후 H:MM] 본문' -> (datetime, 발신자, 본문).
+
+    cur_date(직전 날짜 헤더에서 얻은 y,m,d)가 있어야 완전한 시각을 만들 수 있다.
+    패턴 불일치이거나 날짜 헤더가 아직 없으면 None.
+    """
+    m = BRACKET_MSG_RE.match(line)
+    if m is None:
+        return None
+    sender, ampm, hour, minute, text = m.groups()
+    if cur_date is None:
+        return None  # 날짜 헤더보다 먼저 나온 메시지 — 날짜 미상이라 처리 불가
+    year, month, day = cur_date
+    dt = datetime(year, month, day, to_24h(ampm, int(hour)), int(minute))
+    return dt, sender, text
 
 
 def split_sender(content: str) -> tuple[str, str] | None:
@@ -118,6 +180,7 @@ def parse_kakao(path: str | Path) -> list[Message]:
     cur_dt: datetime | None = None
     cur_sender: str | None = None
     cur_lines: list[str] = []
+    cur_date: tuple[int, int, int] | None = None  # 포맷 B: 최근 날짜 헤더의 (y,m,d)
 
     def flush() -> None:
         """누적된 현재 메시지를 확정해 messages에 추가 (노이즈면 버림)."""
@@ -135,30 +198,46 @@ def parse_kakao(path: str | Path) -> list[Message]:
     with open(path, encoding="utf-8") as f:
         for raw in f:
             line = raw.rstrip("\n")
-            parsed = parse_line(line)
 
-            if parsed is None:
-                # '날짜 구분선'이면 스킵, 아니면 직전 메시지의 연속 줄
-                if is_date_separator(line):
-                    continue
-                if cur_sender is not None:
-                    cur_lines.append(line)
+            # 1) 날짜 섹션 헤더 — 포맷 B의 날짜를 갱신하고 스킵 (포맷 A의 요일 헤더도 여기서 처리)
+            dh = match_date_header(line)
+            if dh is not None:
+                flush()
+                cur_date = dh
                 continue
 
-            dt, content = parsed
-            sd = split_sender(content)
+            # 2) 포맷 A: "날짜 시각, 발신자 : 본문"
+            parsed = parse_line(line)
+            if parsed is not None:
+                dt, content = parsed
+                sd = split_sender(content)
+                if sd is None:
+                    # 시스템 이벤트(콤마 O, 콜론 X — 입장/퇴장) — 진행 중 메시지 마무리 후 스킵
+                    flush()
+                    continue
+                sender, first_line = sd
+                flush()
+                cur_dt, cur_sender, cur_lines = dt, sender, [first_line]
+                continue
 
-            if sd is None:
-                # 시스템 이벤트(입장/퇴장) — 진행 중 메시지 마무리 후 스킵
+            # 3) 포맷 B: "[발신자] [오후 H:MM] 본문"
+            bracket = parse_bracket_line(line, cur_date)
+            if bracket is not None:
+                dt, sender, first_line = bracket
+                flush()
+                cur_dt, cur_sender, cur_lines = dt, sender, [first_line]
+                continue
+
+            # 4) 그 외 — 시각 구분선/시스템 줄/멀티라인 연속 줄/헤더 잡음
+            if is_date_separator(line):
+                continue
+            if is_system_line(line):
+                # 대괄호 없는 입/퇴장 줄 — 진행 중 메시지 마무리 후 스킵 (연속 줄 오인 방지)
                 flush()
                 continue
-
-            # 새 메시지 시작
-            sender, first_line = sd
-            flush()
-            cur_dt = dt
-            cur_sender = sender
-            cur_lines = [first_line]
+            if cur_sender is not None:
+                cur_lines.append(line)  # 멀티라인 본문
+            # else: 파일 헤더 등 잡음 — 버림
 
         flush()  # 파일 끝 — 마지막 메시지 확정
 
